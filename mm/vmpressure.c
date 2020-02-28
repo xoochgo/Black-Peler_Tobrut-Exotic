@@ -280,7 +280,6 @@ static void vmpressure_memcg(gfp_t gfp, struct mem_cgroup *memcg, bool critical,
 			     unsigned long reclaimed)
 {
 	struct vmpressure *vmpr = memcg_to_vmpressure(memcg);
-	unsigned long flags;
 
 	/*
 	 * If we got here with no pages scanned, then that is an indicator
@@ -383,13 +382,8 @@ static void vmpressure_global(gfp_t gfp, unsigned long scanned, bool critical,
 	unsigned long stall;
 	unsigned long flags;
 
-	if (critical)
-		scanned = calculate_vmpressure_win();
-
-	spin_lock_irqsave(&vmpr->sr_lock, flags);
-	if (scanned) {
-		vmpr->scanned += scanned;
-		vmpr->reclaimed += reclaimed;
+	if (!scanned)
+		return;
 
 		if (!current_is_kswapd())
 			vmpr->stall += scanned;
