@@ -315,7 +315,7 @@ static void vmpressure_memcg(gfp_t gfp, struct mem_cgroup *memcg, bool critical,
 		scanned = vmpr->scanned += scanned;
 		reclaimed = vmpr->reclaimed += reclaimed;
 		if (!critical && scanned < calculate_vmpressure_win()) {
-			spin_unlock_irqrestore(&vmpr->sr_lock, flags);
+			spin_unlock(&vmpr->sr_lock);
 			return;
 		}
 		vmpr->scanned = vmpr->reclaimed = 0;
@@ -343,37 +343,6 @@ static void vmpressure_memcg(gfp_t gfp, struct mem_cgroup *memcg, bool critical,
 			     unsigned long reclaimed) { }
 #endif
 
-bool vmpressure_inc_users(int order)
-{
-	struct vmpressure *vmpr = &global_vmpressure;
-	unsigned long flags;
-
-	if (order > PAGE_ALLOC_COSTLY_ORDER)
-		return false;
-
-	write_lock_irqsave(&vmpr->users_lock, flags);
-	if (atomic_long_inc_return_relaxed(&vmpr->users) == 1) {
-		/* Clear out stale vmpressure data when reclaim begins */
-		spin_lock(&vmpr->sr_lock);
-		vmpr->scanned = 0;
-		vmpr->reclaimed = 0;
-		vmpr->stall = 0;
-		spin_unlock(&vmpr->sr_lock);
-	}
-	write_unlock_irqrestore(&vmpr->users_lock, flags);
-
-	return true;
-}
-
-void vmpressure_dec_users(void)
-{
-	struct vmpressure *vmpr = &global_vmpressure;
-
-	/* Decrement the vmpressure user count with release semantics */
-	smp_mb__before_atomic();
-	atomic_long_dec(&vmpr->users);
-}
-
 static void vmpressure_global(gfp_t gfp, unsigned long scanned, bool critical,
 			      unsigned long reclaimed)
 {
@@ -382,11 +351,11 @@ static void vmpressure_global(gfp_t gfp, unsigned long scanned, bool critical,
 	unsigned long stall;
 	unsigned long flags;
 
+	if (critical)
+		scanned = calculate_vmpressure_win();
+
 	if (scanned) {
 		spin_lock(&vmpr->sr_lock);
-		if (!vmpr->scanned)
-			calculate_vmpressure_win();
-
 		vmpr->scanned += scanned;
 		vmpr->reclaimed += reclaimed;
 
@@ -398,7 +367,7 @@ static void vmpressure_global(gfp_t gfp, unsigned long scanned, bool critical,
 		reclaimed = vmpr->reclaimed;
 		spin_unlock(&vmpr->sr_lock);
 
-		if (scanned < vmpressure_win)
+		if (!critical && scanned < calculate_vmpressure_win())
 			return;
 	}
 
@@ -452,25 +421,6 @@ static void __vmpressure(gfp_t gfp, struct mem_cgroup *memcg, bool critical,
 void vmpressure(gfp_t gfp, struct mem_cgroup *memcg, bool tree,
 		unsigned long scanned, unsigned long reclaimed, int order)
 {
-	struct vmpressure *vmpr = &global_vmpressure;
-	unsigned long flags;
-
-	if (order > PAGE_ALLOC_COSTLY_ORDER)
-		return;
-
-	/*
-	 * It's possible for kswapd to keep doing reclaim even though memory
-	 * pressure isn't high anymore. We should only track vmpressure when
-	 * there are failed memory allocations actively stuck in the page
-	 * allocator's slow path. No failed allocations means pressure is fine.
-	 */
-	read_lock_irqsave(&vmpr->users_lock, flags);
-	if (!atomic_long_read(&vmpr->users)) {
-		read_unlock_irqrestore(&vmpr->users_lock, flags);
-		return;
-	}
-	read_unlock_irqrestore(&vmpr->users_lock, flags);
-
 	__vmpressure(gfp, memcg, false, tree, scanned, reclaimed);
 }
 
