@@ -1707,11 +1707,6 @@ out_unlock:
 	return retval;
 }
 
-#ifdef CONFIG_UCLAMP_ASSIST
-static void uclamp_set(struct kernfs_open_file *of,
-		size_t nbytes, loff_t off);
-#endif
-
 /*
  * Common handling for a write to a "cpus" or "mems" file.
  */
@@ -1770,10 +1765,6 @@ static ssize_t cpuset_write_resmask(struct kernfs_open_file *of,
 	}
 
 	free_trial_cpuset(trialcs);
-#ifdef CONFIG_UCLAMP_ASSIST
-	uclamp_set(of, nbytes, off);
-#endif
-
 out_unlock:
 	mutex_unlock(&cpuset_mutex);
 	kernfs_unbreak_active_protection(of->kn);
@@ -1884,6 +1875,45 @@ int cpu_uclamp_boost_write_u64_wrapper(struct cgroup_subsys_state *css,
                               struct cftype *cftype, u64 boost);
 u64 cpu_uclamp_boost_read_u64_wrapper(struct cgroup_subsys_state *css,
                              struct cftype *cft);
+
+#if !defined(CONFIG_SCHED_TUNE)
+static u64 st_boost_read(struct cgroup_subsys_state *css,
+			     struct cftype *cft)
+{
+	if (!strlen(css->cgroup->kn->name))
+		return -EINVAL;
+
+	return cpu_uclamp_boost_read_u64_wrapper(css, cft);
+}
+
+static int st_boost_write(struct cgroup_subsys_state *css,
+		             struct cftype *cft, u64 boost)
+{
+	if (!strlen(css->cgroup->kn->name))
+		return -EINVAL;
+
+	return cpu_uclamp_boost_write_u64_wrapper(css, cft, boost);
+}
+
+static u64 st_prefer_idle_read(struct cgroup_subsys_state *css,
+			     struct cftype *cft)
+{
+	if (!strlen(css->cgroup->kn->name))
+		return -EINVAL;
+
+	return cpu_uclamp_ls_read_u64_wrapper(css, cft);
+}
+
+static int st_prefer_idle_write(struct cgroup_subsys_state *css,
+			     struct cftype *cft, u64 prefer_idle)
+{
+	if (!strlen(css->cgroup->kn->name))
+		return -EINVAL;
+
+	return cpu_uclamp_ls_write_u64_wrapper(css, cft, prefer_idle);
+}
+#endif
+
 #endif
 
 /*
@@ -2013,54 +2043,23 @@ static struct cftype files[] = {
 		.read_u64 = cpu_uclamp_boost_read_u64_wrapper,
 		.write_u64 = cpu_uclamp_boost_write_u64_wrapper,
 	},
+
+#if !defined(CONFIG_SCHED_TUNE)
+	{
+		.name = "schedtune.boost",
+		.read_u64 = st_boost_read,
+		.write_u64 = st_boost_write,
+	},
+	{
+		.name = "schedtune.prefer_idle",
+		.read_u64 = st_prefer_idle_read,
+		.write_u64 = st_prefer_idle_write,
+	},
+#endif
+
 #endif
 	{ }	/* terminate */
 };
-
-#ifdef CONFIG_UCLAMP_ASSIST
-struct ucl_param {
-	char *name;
-	char uclamp_min[3];
-	char uclamp_max[3];
-	u64  uclamp_latency_sensitive;
-	u64  uclamp_boosted;
-};
-
-static void uclamp_set(struct kernfs_open_file *of,
-		size_t nbytes, loff_t off)
-{
-	int i;
-	struct cpuset *cs = css_cs(of_css(of));
-	const char *cs_name = cs->css.cgroup->kn->name;
-
-	static struct ucl_param tgts[] = {
-		{"top-app",    	     	"35", "max", 1, 1},
-		{"foreground", 	     	"10",  "30",  0, 0},
-		{"background", 	     	"10", "40", 0, 0},
-		{"system-background", 	"0",  "30",  0, 0},
-		{"camera-daemon",	"0", "50", 0, 0},
-		{"display",		"20", "100", 1, 0},
-		{"restricted",		"0",  "30",  0, 0},
-	};
-
-	for (i = 0; i < ARRAY_SIZE(tgts); i++) {
-		struct ucl_param tgt = tgts[i];
-
-		if (!strncmp(cs_name, tgt.name, strlen(tgt.name))) {
-			cpu_uclamp_min_write_wrapper(of, tgt.uclamp_min,
-				nbytes, off);
-			cpu_uclamp_max_write_wrapper(of, tgt.uclamp_max,
-				nbytes, off);
-			cpu_uclamp_ls_write_u64_wrapper(&cs->css, NULL,
-				tgt.uclamp_latency_sensitive);
-			cpu_uclamp_boost_write_u64_wrapper(&cs->css, NULL,
-				tgt.uclamp_boosted);
-
-			break;
-		}
-	}
-}
-#endif
 
 /*
  *	cpuset_css_alloc - allocate a cpuset css
