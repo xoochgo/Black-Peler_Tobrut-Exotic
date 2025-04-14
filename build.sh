@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =========================
-# Tobrut Exotic Build Script - MIUI Version
+# Tobrut Exotic Build Script - MIUI Legacy Version
 # =========================
 
 set -e
@@ -55,7 +55,7 @@ cp out/arch/arm64/boot/Image.gz AnyKernel3/Image.gz
 cp out/arch/arm64/boot/dtbo.img AnyKernel3/dtbo.img
 cp out/arch/arm64/boot/dtb.img AnyKernel3/dtb.img
 cd AnyKernel3
-zip -r "../TobrutExotic-MIUI-${BUILD_TIME}.zip" *
+zip -r "../TobrutExotic-MIUI-Legacy-${BUILD_TIME}.zip" *
 cd ..
 
 echo -e "\n✅ Build completed: TobrutExotic-MIUI-${BUILD_TIME}.zip"
@@ -65,6 +65,6 @@ if [[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_CHAT_ID" ]]; then
   curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
     -F chat_id="${TELEGRAM_CHAT_ID}" \
     -F message_thread_id=120979 \
-    -F document=@"TobrutExotic-MIUI-${BUILD_TIME}.zip" \
+    -F document=@"TobrutExotic-MIUI-Legacy-${BUILD_TIME}.zip" \
     -F caption=" Last Version is Cumming "
 fi
