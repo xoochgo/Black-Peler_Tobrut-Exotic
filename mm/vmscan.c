@@ -67,6 +67,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
 
+atomic_long_t kshrinkd_waiters;
+
 struct scan_control {
 	/* How many pages shrink_list() should reclaim */
 	unsigned long nr_to_reclaim;
