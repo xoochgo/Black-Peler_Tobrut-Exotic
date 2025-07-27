@@ -6245,6 +6245,12 @@ int dsi_panel_enable(struct dsi_panel *panel)
 	}
 
 	count = panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_DISP_BC_120HZ].count;
+	
+	/* Disable auto-HBM to prevent sunlight mode activating by itself */
+	panel->hbm_mode = 0;
+	panel->hbm_enabled = false;
+	panel->fod_hbm_enabled = false;
+	panel->fod_dimlayer_hbm_enabled = false;
 
 	if (panel->hbm_mode)
 		dsi_panel_apply_hbm_mode(panel);
