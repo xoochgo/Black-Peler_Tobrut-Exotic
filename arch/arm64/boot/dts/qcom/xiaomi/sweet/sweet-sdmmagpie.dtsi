@@ -236,6 +236,10 @@ And public attribution of xiaomi platforms(like F3 and so and)
 	//pinctrl-0 = <&bq2597x_int_default &bq2597x_int_suspend>;
 
 	ln8000_charger,irq_index = <296>;
+	
+	/* pembatas arus agar tidak matot
+	ln8000_charger,input-current-limit = <4500000>;
+    ln8000_charger,charging-current-limit = <4500000>;
 
 	/* Threshold Proteksi (tetap dipertahankan) */
 	ln8000_charger,bat-ovp-threshold = <4560>;
@@ -1024,8 +1028,8 @@ And public attribution of xiaomi platforms(like F3 and so and)
 	/* Line bawaanmu, tetap dipertahankan */
 	vccq2-voltage-level = <1800000 1950000>;
 
-	spm-level = <3>;
-	rpm-level = <3>;
+	spm-level = <2>;
+	rpm-level = <2>;
 
 	/* Tambahan optimasi konsumsi daya */
 	devfreq-min-freq = <100000000>;
