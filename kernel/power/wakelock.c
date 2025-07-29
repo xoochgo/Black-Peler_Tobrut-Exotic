@@ -224,12 +224,27 @@ static struct wakelock *wakelock_lookup_add(const char *name, size_t len,
 	return wl;
 }
 
-/* Exotic wakelock filter - skip wakelocks with these names */
+/* Exotic wakelock filter - skip wakelocks with these names when screen is off */
 static const char *blocked_wakelocks[] = {
-	"ufs_hba",
-	"ufs_pm",
-	"ufsclks",
-	"ufs-event",
+	/* UFS / Storage */
+	"ufs_hba", "ufs_pm", "ufsclks", "ufs-event", "ufs-busmon",
+	"scsi_eh", "sdcardfs", "vold",
+
+	/* Camera / Sensor */
+	"cam", "camsensor", "camera_power", "cam_req_mgr",
+	"sensor_ind", "sensor_wakeup", "sensortest",
+
+	/* Audio / Media */
+	"audio_dl", "audiohal", "audiod", "audio_wakelock",
+	"media.codec", "Codec2",
+
+	/* Connectivity */
+	"wlan_rx_wake", "wlan_timer", "wifi_low_latency",
+	"netd", "net_scheduler", "netmgr_wl", "ipa_ws",
+
+	/* Display / Misc */
+	"logd", "dp_wakelock", "system_suspend", "ssr",
+	"qcom_rx_wakelock", "timerfd", "alarmtimer",
 	NULL
 };
 
