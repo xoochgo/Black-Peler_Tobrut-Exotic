@@ -2,6 +2,8 @@
  * ln8000-charger.c - Charger driver for LIONSEMI LN8000
  *
  * Copyright (C) 2021 Lion Semiconductor Inc.
+
+
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -35,6 +37,7 @@
 #include <linux/sysfs.h>
 #include <linux/debugfs.h>
 #include <linux/types.h>
+
 //#include <linux/power/ln8000_charger.h>
 #include "ln8000_charger.h"
 #include "cp_qc30.h"
@@ -274,8 +277,10 @@ static int ln8000_enable_iin_loop_int(struct ln8000_info *info, bool enable)
 
 static int ln8000_enable_vac_ov(struct ln8000_info *info, bool enable)
 {
+
     return ln8000_update_reg(info, LN8000_REG_FAULT_CTRL,
                              0x1 << LN8000_BIT_DISABLE_VAC_OV,
+
                              !(enable) << LN8000_BIT_DISABLE_VAC_OV);
 }
 
@@ -591,18 +596,22 @@ static void ln8000_irq_sleep(struct ln8000_info *info, int suspend)
     }
 }
 
+
 static void ln8000_soft_reset(struct ln8000_info *info)
 {
     ln8000_write_reg(info, LN8000_REG_LION_CTRL, 0xC6);
 
     ln8000_irq_sleep(info, 1);
 
+
     ln_info("Trigger soft-reset\n");
+
     ln8000_update_reg(info, LN8000_REG_BC_OP_2, 0x1 << 0, 0x1 << 0);
     msleep(5 * 2);  /* ln8000 min wait time 5ms (after POR) */
 
     ln8000_irq_sleep(info, 0);
 }
+
 
 static void ln8000_update_opmode(struct ln8000_info *info)
 {
@@ -814,6 +823,7 @@ static int psy_chg_get_ti_alarm_status(struct ln8000_info *info)
              (info->tbus_tbat_alarm << BUS_THERM_ALARM_SHIFT) |
              (info->tdie_alarm << DIE_THERM_ALARM_SHIFT));
 
+
     if (info->vbus_uV < (info->vbat_uV * 2)) {
         v_offset = 0;
     } else {
@@ -837,6 +847,7 @@ static int psy_chg_get_ti_alarm_status(struct ln8000_info *info)
             ln8000_change_opmode(info, LN8000_OPMODE_STANDBY);
             ln_info("forced change standby_mode for prevent reverse current\n");
             info->chg_en = 0;
+
         }
     }
 
@@ -966,7 +977,9 @@ static int ln8000_charger_get_property(struct power_supply *psy,
         }
         break;
     case POWER_SUPPLY_PROP_MODEL_NAME:
+
         val->strval = "bq2597x-standalone";
+
         break;
     default:
         return -EINVAL;
@@ -1412,6 +1425,7 @@ static const struct regmap_config ln8000_regmap_config = {
     .max_register	= LN8000_REG_MAX,
 };
 
+
 static int try_to_find_i2c_regess(struct ln8000_info *info)
 {
 	uint8_t reg_set[] = {0x51, 0x55, 0x5b, 0x5f};
@@ -1446,6 +1460,7 @@ static int try_to_find_i2c_regess(struct ln8000_info *info)
 	return ret;
 }
 
+
 static int ln8000_get_dev_role(struct i2c_client *client)
 {
     const struct of_device_id *of_id;
@@ -1458,7 +1473,9 @@ static int ln8000_get_dev_role(struct i2c_client *client)
 
     dev_info(&client->dev,"%s: matched to %s\n", __func__, of_id->compatible);
 
-    return (int)of_id->data;
+
+    return (long) of_id->data;
+
 }
 
 static int ln8000_parse_dt(struct ln8000_info *info)
@@ -1549,7 +1566,9 @@ static int ln8000_psy_register(struct ln8000_info *info)
 {
     info->psy_cfg.drv_data = info;
     info->psy_cfg.of_node  = info->client->dev.of_node;
+
     info->psy_desc.name 		= "bq2597x-standalone";
+
     info->psy_desc.type 		= POWER_SUPPLY_TYPE_MAINS;
     info->psy_desc.properties	= ln8000_charger_props;
     info->psy_desc.num_properties = ARRAY_SIZE(ln8000_charger_props);
@@ -1572,11 +1591,13 @@ static int ln8000_probe(struct i2c_client *client, const struct i2c_device_id *i
     struct ln8000_info *info;
     int ret = 0;
 
+
     info = devm_kzalloc(&client->dev, sizeof(struct ln8000_info), GFP_KERNEL);
     if (info == NULL) {
         dev_err(&client->dev, "%s: fail to alloc devm for ln8000_info\n", __func__);
         return -ENOMEM;
     }
+
 
 	info->dev = &client->dev;
 	info->client = client;
@@ -1592,6 +1613,7 @@ static int ln8000_probe(struct i2c_client *client, const struct i2c_device_id *i
 	}
 	dev_info(&client->dev, "device id=0x%x\n", ret);
 
+
     info->dev_role = ln8000_get_dev_role(client);
     if (IS_ERR_VALUE((unsigned long)info->dev_role)) {
         kfree(info);
@@ -1604,6 +1626,8 @@ static int ln8000_probe(struct i2c_client *client, const struct i2c_device_id *i
        kfree(info);
        return -ENOMEM;
     }
+
+
 
     ret = ln8000_parse_dt(info);
     if (IS_ERR_VALUE((unsigned long)ret)) {
@@ -1623,7 +1647,9 @@ static int ln8000_probe(struct i2c_client *client, const struct i2c_device_id *i
     mutex_init(&info->irq_lock);
     i2c_set_clientdata(client, info);
 
+
     ln8000_soft_reset(info);
+
     ln8000_init_device(info);
 
     ret = ln8000_psy_register(info);
@@ -1660,6 +1686,8 @@ static int ln8000_probe(struct i2c_client *client, const struct i2c_device_id *i
     }
 
     determine_initial_status(info);
+
+
 
     return 0;
 
