@@ -2327,12 +2327,17 @@ static int ufs_qcom_probe(struct platform_device *pdev)
 
 	/* Perform generic probe */
 	err = ufshcd_pltfrm_init(pdev, &ufs_hba_qcom_variant);
-	if (err)
-		dev_err(dev, "ufshcd_pltfrm_init() failed %d\n", err);
-
+if (err) {
+	dev_err(dev, "ufshcd_pltfrm_init() failed %d\n", err);
 	return err;
 }
 
+/* Enable autosuspend to allow UFS enter low power */
+pm_runtime_set_autosuspend_delay(dev, 200); // Delay 200ms, tweakable
+pm_runtime_use_autosuspend(dev);
+
+return 0;
+}
 /**
  * ufs_qcom_remove - set driver_data of the device to NULL
  * @pdev: pointer to platform device handle

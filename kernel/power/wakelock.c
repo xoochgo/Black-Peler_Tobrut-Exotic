@@ -222,6 +222,26 @@ static struct wakelock *wakelock_lookup_add(const char *name, size_t len,
 	return wl;
 }
 
+/* Exotic wakelock filter - skip wakelocks with these names */
+static const char *blocked_wakelocks[] = {
+	"ufs_hba",
+	"ufs_pm",
+	"ufsclks",
+	"ufs-event",
+	NULL
+};
+
+static bool is_blocked_wakelock(const char *name)
+{
+	const char **blk = blocked_wakelocks;
+	while (*blk) {
+		if (strstr(name, *blk))
+			return true;
+		blk++;
+	}
+	return false;
+}
+
 int pm_wake_lock(const char *buf)
 {
 	const char *str = buf;
@@ -239,6 +259,12 @@ int pm_wake_lock(const char *buf)
 	len = str - buf;
 	if (!len)
 		return -EINVAL;
+
+	/* Tambahkan filter Exotic di sini */
+	if (is_blocked_wakelock(buf)) {
+		pr_info("ExoticWakelock: blocked wakelock %.*s\n", (int)len, buf);
+		return 0;
+	}
 
 	if (*str && *str != '\n') {
 		/* Find out if there's a valid timeout string appended. */
