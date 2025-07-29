@@ -20,7 +20,9 @@
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/sched.h>
-
+#include <linux/fb.h>
+#include <linux/notifier.h>
+#include <linux/printk.h>
 #include "power.h"
 
 static DEFINE_MUTEX(wakelocks_lock);
@@ -231,9 +233,15 @@ static const char *blocked_wakelocks[] = {
 	NULL
 };
 
+static bool screen_is_off = false;
+
 static bool is_blocked_wakelock(const char *name)
 {
 	const char **blk = blocked_wakelocks;
+
+	if (!screen_is_off)
+		return false;
+
 	while (*blk) {
 		if (strstr(name, *blk))
 			return true;
@@ -241,6 +249,33 @@ static bool is_blocked_wakelock(const char *name)
 	}
 	return false;
 }
+
+static int fb_notifier_callback(struct notifier_block *self,
+				unsigned long event, void *data)
+{
+	struct fb_event *evdata = data;
+	int *blank;
+
+	if (event != FB_EVENT_BLANK || !evdata || !evdata->data)
+		return NOTIFY_DONE;
+
+	blank = evdata->data;
+	screen_is_off = (*blank != FB_BLANK_UNBLANK);
+
+	pr_info("ExoticWakelock: screen_is_off = %d\n", screen_is_off);
+	return NOTIFY_OK;
+}
+
+static struct notifier_block fb_notif = {
+	.notifier_call = fb_notifier_callback,
+};
+
+static int __init exotic_wakelock_init(void)
+{
+	fb_register_client(&fb_notif);
+	return 0;
+}
+late_initcall(exotic_wakelock_init);
 
 int pm_wake_lock(const char *buf)
 {
@@ -260,14 +295,14 @@ int pm_wake_lock(const char *buf)
 	if (!len)
 		return -EINVAL;
 
-	/* Tambahkan filter Exotic di sini */
+	/* Exotic wakelock screen-based filter */
 	if (is_blocked_wakelock(buf)) {
-		pr_info("ExoticWakelock: blocked wakelock %.*s\n", (int)len, buf);
+		pr_info("ExoticWakelock: blocked wakelock %.*s (screen_off=%d)\n",
+			(int)len, buf, screen_is_off);
 		return 0;
 	}
 
 	if (*str && *str != '\n') {
-		/* Find out if there's a valid timeout string appended. */
 		ret = kstrtou64(skip_spaces(str), 10, &timeout_ns);
 		if (ret)
 			return -EINVAL;
@@ -280,6 +315,7 @@ int pm_wake_lock(const char *buf)
 		ret = PTR_ERR(wl);
 		goto out;
 	}
+
 	if (timeout_ns) {
 		u64 timeout_ms = timeout_ns + NSEC_PER_MSEC - 1;
 
@@ -291,7 +327,7 @@ int pm_wake_lock(const char *buf)
 
 	wakelocks_lru_most_recent(wl);
 
- out:
+out:
 	mutex_unlock(&wakelocks_lock);
 	return ret;
 }
@@ -309,7 +345,7 @@ int pm_wake_unlock(const char *buf)
 	if (!len)
 		return -EINVAL;
 
-	if (buf[len-1] == '\n')
+	if (buf[len - 1] == '\n')
 		len--;
 
 	if (!len)
@@ -322,12 +358,13 @@ int pm_wake_unlock(const char *buf)
 		ret = PTR_ERR(wl);
 		goto out;
 	}
+
 	__pm_relax(wl->ws);
 
 	wakelocks_lru_most_recent(wl);
 	wakelocks_gc();
 
- out:
+out:
 	mutex_unlock(&wakelocks_lock);
 	return ret;
 }
