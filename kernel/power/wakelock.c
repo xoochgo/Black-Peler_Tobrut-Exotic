@@ -224,7 +224,7 @@ static struct wakelock *wakelock_lookup_add(const char *name, size_t len,
 	return wl;
 }
 
-/* Exotic wakelock filter - skip wakelocks with these names when screen is off */
+/* Exotic wakelock filter - revised: block only safe wakelocks when screen is off */
 static const char *blocked_wakelocks[] = {
 	/* UFS / Storage */
 	"ufs_hba", "ufs_pm", "ufsclks", "ufs-event", "ufs-busmon",
@@ -238,13 +238,14 @@ static const char *blocked_wakelocks[] = {
 	"audio_dl", "audiohal", "audiod", "audio_wakelock",
 	"media.codec", "Codec2",
 
-	/* Connectivity */
-	"wlan_rx_wake", "wlan_timer", "wifi_low_latency",
-	"netd", "net_scheduler", "netmgr_wl", "ipa_ws",
+	/* Connectivity (safe only) */
+	"wlan_timer", "wifi_low_latency",
+	"net_scheduler", "ipa_ws",
 
 	/* Display / Misc */
 	"logd", "dp_wakelock", "system_suspend", "ssr",
-	"qcom_rx_wakelock", "timerfd", "alarmtimer",
+	"timerfd",
+
 	NULL
 };
 
