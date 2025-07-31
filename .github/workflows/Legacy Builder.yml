@@ -1,4 +1,4 @@
-name: build MIUI Legacy
+name: build Legacy
 on:
   workflow_dispatch:
 
