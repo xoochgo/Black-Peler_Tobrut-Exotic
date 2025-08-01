@@ -1,4 +1,4 @@
-name: build Legacy
+name: build LEGACY
 on:
   workflow_dispatch:
 
