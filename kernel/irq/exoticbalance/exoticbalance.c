@@ -7,31 +7,84 @@
 #include <linux/workqueue.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/thermal.h>
+#include <linux/cpufreq.h>
 
 #define BALANCE_INTERVAL_MS 1000
-#define MIN_DELTA_IRQS 64
+#define MIN_DELTA_IRQS_BASE 800
+#define MAX_CPU_TEMP_THRESHOLD 70
 
 extern unsigned int kstat_irqs_cpu(unsigned int irq, int cpu);
 
-/* Morat Engine: ExoticBalance */
-static bool enabled = true;
-module_param(enabled, bool, 0644);
-MODULE_PARM_DESC(enabled, "Enable or disable ExoticBalance");
+static bool exoticbalance_enabled = true;
+module_param(exoticbalance_enabled, bool, 0644);
+MODULE_PARM_DESC(exoticbalance_enabled, "Enable ExoticBalance");
 
 static struct delayed_work balance_work;
 static unsigned int *cpu_irq_count;
 static unsigned int *cpu_irq_last;
+
+/* Dapatkan suhu maksimum dari semua core (jika tersedia) */
+static int get_max_cpu_temp(void)
+{
+#if IS_ENABLED(CONFIG_THERMAL)
+	struct thermal_zone_device *tz;
+	int temp = 0;
+
+	tz = thermal_zone_get_zone_by_name("cpu-thermal");
+	if (!IS_ERR(tz)) {
+		tz->ops->get_temp(tz, &temp);
+		temp /= 1000;
+	}
+	return temp;
+#else
+	return 0;
+#endif
+}
+
+static unsigned int get_cpu_max_freq(int cpu)
+{
+	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
+	unsigned int freq = 0;
+
+	if (policy) {
+		freq = policy->cpuinfo.max_freq;
+		cpufreq_cpu_put(policy);
+	}
+	return freq;
+}
+
+static bool is_cpu_big(int cpu)
+{
+	return get_cpu_max_freq(cpu) >= 2000000;
+}
+
+static void migrate_irqs_simple(int from, int to)
+{
+	int irq;
+	cpumask_t new_mask;
+
+	for (irq = 0; irq < nr_irqs; irq++) {
+		if (!irq_can_set_affinity(irq))
+			continue;
+
+		cpumask_clear(&new_mask);
+		cpumask_set_cpu(to, &new_mask);
+
+		if (irq_set_affinity(irq, &new_mask) == 0)
+			pr_info("ExoticBalance: Migrated IRQ %d from CPU%d to CPU%d\n", irq, from, to);
+	}
+}
 
 static void exotic_balance_irq(struct work_struct *work)
 {
 	int irq, cpu;
 	unsigned int max_irq = 0, min_irq = UINT_MAX;
 	int max_cpu = -1, min_cpu = -1;
+	int delta_sum = 0, delta_avg = 0;
 
-	if (!enabled) {
-		schedule_delayed_work(&balance_work, msecs_to_jiffies(BALANCE_INTERVAL_MS));
-		return;
-	}
+	if (!exoticbalance_enabled)
+		goto schedule_next;
 
 	memset(cpu_irq_count, 0, sizeof(unsigned int) * nr_cpu_ids);
 
@@ -42,6 +95,7 @@ static void exotic_balance_irq(struct work_struct *work)
 
 	for_each_online_cpu(cpu) {
 		unsigned int delta = cpu_irq_count[cpu] - cpu_irq_last[cpu];
+		delta_sum += delta;
 
 		if (delta > max_irq) {
 			max_irq = delta;
@@ -55,18 +109,29 @@ static void exotic_balance_irq(struct work_struct *work)
 		cpu_irq_last[cpu] = cpu_irq_count[cpu];
 	}
 
-	pr_info("ExoticBalance: CPU%d busiest (%u irqs), CPU%d idlest (%u irqs)\n",
-	        max_cpu, max_irq, min_cpu, min_irq);
+	delta_avg = delta_sum / num_online_cpus();
+	int dynamic_threshold = delta_avg + MIN_DELTA_IRQS_BASE;
 
-	if (max_irq - min_irq >= MIN_DELTA_IRQS) {
-		pr_info("ExoticBalance: balancing trigger (delta=%u)\n", max_irq - min_irq);
-		// TODO: implement IRQ migration or affinity hint here
+	if (max_cpu >= 0 && min_cpu >= 0 && max_cpu != min_cpu) {
+		pr_info("ExoticBalance: CPU%d busiest (%u), CPU%d idlest (%u), delta=%u\n",
+		        max_cpu, max_irq, min_cpu, min_irq, max_irq - min_irq);
+
+		if ((max_irq - min_irq) >= dynamic_threshold) {
+			if (!is_cpu_big(min_cpu) && is_cpu_big(max_cpu)) {
+				pr_info("ExoticBalance: Skipped - avoid migrating from big to little core\n");
+			} else if (get_max_cpu_temp() >= MAX_CPU_TEMP_THRESHOLD) {
+				pr_info("ExoticBalance: Skipped - high CPU temp\n");
+			} else {
+				pr_info("ExoticBalance: Triggered migration\n");
+				migrate_irqs_simple(max_cpu, min_cpu);
+			}
+		}
 	}
 
+schedule_next:
 	schedule_delayed_work(&balance_work, msecs_to_jiffies(BALANCE_INTERVAL_MS));
 }
 
-static int __init exoticbalance_init(void) __init;
 static int __init exoticbalance_init(void)
 {
 	cpu_irq_count = kzalloc(sizeof(unsigned int) * nr_cpu_ids, GFP_KERNEL);
@@ -77,17 +142,16 @@ static int __init exoticbalance_init(void)
 	INIT_DELAYED_WORK(&balance_work, exotic_balance_irq);
 	schedule_delayed_work(&balance_work, msecs_to_jiffies(BALANCE_INTERVAL_MS));
 
-	pr_info("ExoticBalance: initialized\n");
+	pr_info("ExoticBalance: Initialized\n");
 	return 0;
 }
 
-static void __exit exoticbalance_exit(void) __exit;
 static void __exit exoticbalance_exit(void)
 {
 	cancel_delayed_work_sync(&balance_work);
 	kfree(cpu_irq_count);
 	kfree(cpu_irq_last);
-	pr_info("ExoticBalance: unloaded\n");
+	pr_info("ExoticBalance: Unloaded\n");
 }
 
 module_init(exoticbalance_init);
@@ -95,4 +159,4 @@ module_exit(exoticbalance_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Tobrut Exotic");
-MODULE_DESCRIPTION("ExoticBalance IRQ balancer with FKM toggle");
+MODULE_DESCRIPTION("ExoticBalance: Smart IRQ load balancer with adaptive logic");
