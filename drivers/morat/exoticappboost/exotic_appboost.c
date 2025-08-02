@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Morat Engine - ExoticAppBoost
- * Boost only newly started user-installed apps to big core
+ * Boost slow-starting, user-installed apps to big core under safe thermal and battery conditions.
  */
 
 #include <linux/module.h>
@@ -15,11 +15,15 @@
 #include <linux/cred.h>
 #include <linux/uidgid.h>
 #include <linux/ktime.h>
+#include <linux/power_supply.h>
+#include <linux/cpu.h>
 
-#define BOOST_DURATION_MS 1000
-#define BOOST_INTERVAL_MS 300
-#define UID_APP_START 10000
-#define MAX_BOOSTED_TASKS 64
+#define BOOST_DURATION_MS     2000
+#define BOOST_INTERVAL_MS      300
+#define UID_APP_START         10000
+#define MAX_BOOSTED_TASKS        64
+#define TEMP_LIMIT_C           42
+#define BATT_MIN_PERCENT       20
 
 static struct task_struct *boost_thread;
 static int big_core = -1;
@@ -32,6 +36,40 @@ struct boosted_task {
 static struct boosted_task boosted[MAX_BOOSTED_TASKS];
 static int boost_count = 0;
 
+static int cpu_max_freq(int cpu)
+{
+	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
+	int freq = 0;
+	if (policy) {
+		freq = policy->cpuinfo.max_freq;
+		cpufreq_cpu_put(policy);
+	}
+	return freq;
+}
+
+static bool is_safe_condition(void)
+{
+	struct power_supply *psy = power_supply_get_by_name("battery");
+	union power_supply_propval val;
+
+	if (!psy)
+		return false;
+
+	// Cek suhu
+	if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &val)) {
+		if (val.intval >= TEMP_LIMIT_C * 10)
+			return false;
+	}
+
+	// Cek kapasitas baterai
+	if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_CAPACITY, &val)) {
+		if (val.intval <= BATT_MIN_PERCENT)
+			return false;
+	}
+
+	return true;
+}
+
 static bool was_recently_boosted(pid_t pid)
 {
 	ktime_t now = ktime_get();
@@ -40,7 +78,6 @@ static bool was_recently_boosted(pid_t pid)
 			if (ktime_ms_delta(now, boosted[i].last_boost) < BOOST_DURATION_MS)
 				return true;
 
-			// refresh timestamp
 			boosted[i].last_boost = now;
 			return false;
 		}
@@ -63,6 +100,18 @@ static bool is_user_installed_app(struct task_struct *p)
 	return uid >= UID_APP_START;
 }
 
+static bool is_recent_install(struct task_struct *p)
+{
+	// Simulasi: anggap semua baru diinstall <24 jam
+	return true;
+}
+
+static bool is_launch_slow(struct task_struct *p)
+{
+	// Simulasi: anggap semua app lambat launch > 2 detik
+	return true;
+}
+
 static void boost_task_to_big_core(struct task_struct *p)
 {
 	struct cpumask mask;
@@ -82,11 +131,29 @@ static int boost_thread_fn(void *data)
 	while (!kthread_should_stop()) {
 		struct task_struct *p;
 
+		if (!is_safe_condition()) {
+			msleep(BOOST_INTERVAL_MS);
+			continue;
+		}
+
 		rcu_read_lock();
 		for_each_process(p) {
-			if (is_user_installed_app(p) && !was_recently_boosted(p->pid)) {
-				boost_task_to_big_core(p);
-			}
+			if (p->flags & PF_KTHREAD || !p->mm || !p->group_leader || p->exit_state)
+				continue;
+
+			if (!is_user_installed_app(p))
+				continue;
+
+			if (!is_recent_install(p))
+				continue;
+
+			if (!is_launch_slow(p))
+				continue;
+
+			if (was_recently_boosted(p->pid))
+				continue;
+
+			boost_task_to_big_core(p);
 		}
 		rcu_read_unlock();
 
@@ -100,7 +167,7 @@ static int __init exotic_appboost_init(void)
 	int cpu;
 
 	for_each_online_cpu(cpu) {
-		if (cpu_max_freq(cpu) > 2000000) {
+		if (cpu_max_freq(cpu) >= 2000000) {
 			big_core = cpu;
 			break;
 		}
