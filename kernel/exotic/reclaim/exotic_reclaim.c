@@ -1,85 +1,83 @@
 // SPDX-License-Identifier: GPL-2.0
-/*
- * ExoticReclaim - Automatic RAM cleaner every 3h after boot, only when screen off >10 min
- */
-
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
 #include <linux/mm.h>
-#include <linux/swap.h>
-#include <linux/fb.h>
-#include <linux/notifier.h>
 #include <linux/timekeeping.h>
+#include <linux/notifier.h>
+#include <linux/fb.h>
+#include <linux/sysctl.h>
 
-#define RECLAIM_INTERVAL_SECS (3 * 3600) 
-#define SCREEN_OFF_REQUIRED_SECS (10 * 60) 
+#define RECLAIM_INTERVAL (60 * HZ)      // check every 1 min
+#define SCREEN_OFF_DELAY (10 * 60)      // 10 min
 
-static struct delayed_work exotic_reclaim_work;
-static ktime_t last_reclaim_time;
-static ktime_t screen_off_time;
+extern int sysctl_drop_caches;
+
+static struct delayed_work reclaim_work;
+static unsigned long screen_off_jiffies = 0;
 static bool screen_is_off = false;
 
-static void exotic_reclaim_fn(struct work_struct *work)
+static void do_reclaim(struct work_struct *work)
 {
-	ktime_t now = ktime_get_boottime_seconds();
+	unsigned long uptime_sec = ktime_get_boottime_seconds();
+	unsigned long now = jiffies;
 
-	if (screen_is_off &&
-	    ktime_to_secs(ktime_sub(now, screen_off_time)) >= SCREEN_OFF_REQUIRED_SECS &&
-	    ktime_to_secs(ktime_sub(now, last_reclaim_time)) >= RECLAIM_INTERVAL_SECS) {
+	if (uptime_sec < 10800) // less than 3 hours
+		goto reschedule;
 
-		pr_info("ExoticReclaim: Dropping caches...\n");
-		sysctl_drop_caches = 3;
-		last_reclaim_time = now;
-	}
+	if (!screen_is_off || !time_after(now, screen_off_jiffies + SCREEN_OFF_DELAY * HZ))
+		goto reschedule;
 
-	schedule_delayed_work(&exotic_reclaim_work, msecs_to_jiffies(60 * 1000)); 
+	pr_info("ExoticReclaim: conditions met, dropping caches\n");
+
+	// drop pagecache + dentries + inodes
+	sysctl_drop_caches = 3;
+
+reschedule:
+	schedule_delayed_work(&reclaim_work, RECLAIM_INTERVAL);
 }
 
-static int fb_notifier_callback(struct notifier_block *self,
-				unsigned long event, void *data)
+static int fb_notifier_callback(struct notifier_block *self, unsigned long event, void *data)
 {
 	struct fb_event *evdata = data;
-	int *blank;
 
-	if (event != FB_EVENT_BLANK || !evdata || !evdata->data)
-		return NOTIFY_DONE;
-
-	blank = evdata->data;
-	screen_is_off = (*blank != FB_BLANK_UNBLANK);
-	if (screen_is_off)
-		screen_off_time = ktime_get_boottime_seconds();
-
-	pr_info("ExoticReclaim: screen_is_off = %d\n", screen_is_off);
-	return NOTIFY_OK;
+	if (event == FB_EVENT_BLANK && evdata && evdata->data) {
+		int *blank = evdata->data;
+		if (*blank == FB_BLANK_POWERDOWN) {
+			screen_is_off = true;
+			screen_off_jiffies = jiffies;
+		} else {
+			screen_is_off = false;
+		}
+	}
+	return 0;
 }
 
-static struct notifier_block fb_notifier = {
+static struct notifier_block fb_nb = {
 	.notifier_call = fb_notifier_callback,
 };
 
 static int __init exotic_reclaim_init(void)
 {
-	pr_info("ExoticReclaim: Init\n");
-
-	last_reclaim_time = ktime_get_boottime_seconds();
-	INIT_DELAYED_WORK(&exotic_reclaim_work, exotic_reclaim_fn);
-	schedule_delayed_work(&exotic_reclaim_work, msecs_to_jiffies(60 * 1000));
-
-	fb_register_client(&fb_notifier);
+	pr_info("ExoticReclaim: loaded\n");
+	INIT_DELAYED_WORK(&reclaim_work, do_reclaim);
+	schedule_delayed_work(&reclaim_work, RECLAIM_INTERVAL);
+	fb_register_client(&fb_nb);
 	return 0;
 }
 
 static void __exit exotic_reclaim_exit(void)
 {
-	cancel_delayed_work_sync(&exotic_reclaim_work);
-	fb_unregister_client(&fb_notifier);
-	pr_info("ExoticReclaim: Exit\n");
+	pr_info("ExoticReclaim: exiting\n");
+	cancel_delayed_work_sync(&reclaim_work);
+	fb_unregister_client(&fb_nb);
 }
 
 module_init(exotic_reclaim_init);
 module_exit(exotic_reclaim_exit);
+
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("ExoticReclaim - Auto RAM cleaner");
-MODULE_AUTHOR("Mr. Morat");
+MODULE_DESCRIPTION("ExoticReclaim - Auto cache cleaner after 3h + screen off 10m");
+MODULE_AUTHOR("Tobrut Kernel");
