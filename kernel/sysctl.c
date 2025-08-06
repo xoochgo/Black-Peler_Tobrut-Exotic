@@ -139,8 +139,6 @@ static int two_hundred = 200;
 #endif /* CONFIG_OPLUS_MM_HACKS */
 static int one_thousand = 1000;
 
-static int max_swappiness = 170;
-
 #ifdef CONFIG_SCHED_WALT
 static int two_million = 2000000;
 #endif
