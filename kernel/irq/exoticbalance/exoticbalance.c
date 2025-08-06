@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+// Property of Morat Engine
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
@@ -10,7 +11,7 @@
 #include <linux/thermal.h>
 #include <linux/cpufreq.h>
 
-#define BALANCE_INTERVAL_MS 1000
+#define BALANCE_INTERVAL_MS 8000
 #define MIN_DELTA_IRQS_BASE 800
 #define MAX_CPU_TEMP_THRESHOLD 70
 
@@ -82,6 +83,7 @@ static void exotic_balance_irq(struct work_struct *work)
 	unsigned int max_irq = 0, min_irq = UINT_MAX;
 	int max_cpu = -1, min_cpu = -1;
 	int delta_sum = 0, delta_avg = 0;
+	int dynamic_threshold;
 
 	if (!exoticbalance_enabled)
 		goto schedule_next;
@@ -110,19 +112,17 @@ static void exotic_balance_irq(struct work_struct *work)
 	}
 
 	delta_avg = delta_sum / num_online_cpus();
-	int dynamic_threshold = delta_avg + MIN_DELTA_IRQS_BASE;
+	dynamic_threshold = delta_avg + MIN_DELTA_IRQS_BASE;
 
 	if (max_cpu >= 0 && min_cpu >= 0 && max_cpu != min_cpu) {
-		pr_info("ExoticBalance: CPU%d busiest (%u), CPU%d idlest (%u), delta=%u\n",
-		        max_cpu, max_irq, min_cpu, min_irq, max_irq - min_irq);
-
 		if ((max_irq - min_irq) >= dynamic_threshold) {
 			if (!is_cpu_big(min_cpu) && is_cpu_big(max_cpu)) {
-				pr_info("ExoticBalance: Skipped - avoid migrating from big to little core\n");
+				// Skip: avoid migrating to little core
 			} else if (get_max_cpu_temp() >= MAX_CPU_TEMP_THRESHOLD) {
-				pr_info("ExoticBalance: Skipped - high CPU temp\n");
+				// Skip: temperature too high
 			} else {
-				pr_info("ExoticBalance: Triggered migration\n");
+				pr_info("ExoticBalance: Triggered migration from CPU%d (%u IRQs) to CPU%d (%u IRQs)\n",
+				        max_cpu, max_irq, min_cpu, min_irq);
 				migrate_irqs_simple(max_cpu, min_cpu);
 			}
 		}
