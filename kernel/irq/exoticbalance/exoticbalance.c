@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 // Property of Morat Engine
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
@@ -10,6 +11,9 @@
 #include <linux/slab.h>
 #include <linux/thermal.h>
 #include <linux/cpufreq.h>
+#include <linux/irq.h>
+#include <linux/irqdesc.h>
+#include <linux/string.h>
 
 #define BALANCE_INTERVAL_MS 8000
 #define MIN_DELTA_IRQS_BASE 800
@@ -25,7 +29,72 @@ static struct delayed_work balance_work;
 static unsigned int *cpu_irq_count;
 static unsigned int *cpu_irq_last;
 
-/* Dapatkan suhu maksimum dari semua core (jika tersedia) */
+/* IRQ blacklist berbasis nama (komprehensif dan aman) */
+static const char *const irq_name_blacklist[] = {
+	// Display / GPU / UI
+	"mdss",         // Qualcomm display
+	"sde",          // Snapdragon Display Engine
+	"dsi",          // Display serial interface
+	"mipi",         // MIPI interface
+	"kgsl",         // GPU (Adreno)
+	"adreno",       // GPU
+	"msm_gpu",      // GPU varian lain
+
+	// Input / Touchscreen
+	"input",        // General input
+	"touch",        // Generic touch
+	"synaptics",    // Synaptics
+	"fts",          // FocalTech
+	"goodix",       // Goodix
+
+	// Storage
+	"ufs",          // UFS base
+	"ufshcd",       // Host controller
+	"qcom-ufshcd",  // Qualcomm variant
+	"sdc",          // SD/MMC
+
+	// Network / Internet
+	"wlan",         // Wi-Fi
+	"wifi",         // Alternate Wi-Fi
+	"rmnet",        // Mobile data
+	"ipa",          // Packet accelerator
+	"qcom,sps",     // Internet DMA
+	"bam",          // Bus Access Manager
+	"modem",        // Modem IRQ
+	"qrtr",         // Qualcomm RPC router
+
+	// Charging / Power
+	"pmic",         // Power management
+	"smb",          // SMB135x/PMIC charger
+	"bms",          // Battery monitor
+
+	// Critical system
+	"timer",        // System timer
+	"hrtimer",      // High-resolution timer
+	"watchdog",     // Watchdog
+	"thermal",      // Thermal control
+	"cpu",          // CPU related IRQ
+	NULL
+};
+
+static bool is_irq_blacklisted(int irq)
+{
+	struct irq_desc *desc = irq_to_desc(irq);
+	const char *name;
+	int i;
+
+	if (!desc || !desc->action || !desc->action->name)
+		return false;
+
+	name = desc->action->name;
+	for (i = 0; irq_name_blacklist[i] != NULL; i++) {
+		if (strnstr(name, irq_name_blacklist[i], strlen(name)))
+			return true;
+	}
+
+	return false;
+}
+
 static int get_max_cpu_temp(void)
 {
 #if IS_ENABLED(CONFIG_THERMAL)
@@ -67,6 +136,9 @@ static void migrate_irqs_simple(int from, int to)
 
 	for (irq = 0; irq < nr_irqs; irq++) {
 		if (!irq_can_set_affinity(irq))
+			continue;
+
+		if (is_irq_blacklisted(irq))
 			continue;
 
 		cpumask_clear(&new_mask);
@@ -159,4 +231,4 @@ module_exit(exoticbalance_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Tobrut Exotic");
-MODULE_DESCRIPTION("ExoticBalance: Smart IRQ load balancer with adaptive logic");
+MODULE_DESCRIPTION("ExoticBalance: Smart IRQ load balancer with adaptive logic and critical IRQ protection");
