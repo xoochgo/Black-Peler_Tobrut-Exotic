@@ -25,16 +25,16 @@ static struct sde_hw_kcal kcal_lut_data = {
 	.min_value		= 1,
 
 	.pcc = (typeof(kcal_lut_data.pcc)) {
-		.red		= 240,
+		.red		= 245,
 		.green		= 255,
-		.blue		= 252,
+		.blue		= 255,
 	},
 
 	.hsic = (typeof(kcal_lut_data.hsic)) {
 		.hue		= 0,
-		.saturation	= 280,
-		.value		= 255,
-		.contrast	= 270,
+		.saturation	= 265,
+		.value		= 250,
+		.contrast	= 260,
 	},
 };
 
