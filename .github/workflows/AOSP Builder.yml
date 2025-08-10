@@ -1,4 +1,40 @@
-name: build AOSP
+import zipfile
+from pathlib import Path
+
+# Создаём папку для файлов
+output_dir = Path("/mnt/data/aosp_with_ath9k")
+output_dir.mkdir(exist_ok=True)
+
+# Оригинальный defconfig из пользователя (с нужными изменениями)
+sweet_defconfig = """
+# Custom sweet_defconfig with ath9k_htc and USB configfs options
+CONFIG_SYSVIPC=y
+CONFIG_WLAN_VENDOR_ATH=y
+CONFIG_ATH9K_HTC=m
+CONFIG_ATH9K_COMMON=m
+CONFIG_ATH9K_HW=m
+CONFIG_ATH9K=m
+CONFIG_ATH9K_PCI=m
+CONFIG_CFG80211=m
+CONFIG_MAC80211=m
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_SERIAL=y
+CONFIG_USB_CONFIGFS_ACM=y
+CONFIG_USB_CONFIGFS_OBEX=y
+CONFIG_USB_CONFIGFS_NCM=y
+CONFIG_USB_CONFIGFS_ECM=y
+CONFIG_USB_CONFIGFS_ECM_SUBSET=y
+CONFIG_USB_CONFIGFS_RNDIS=y
+CONFIG_USB_CONFIGFS_EEM=y
+CONFIG_USB_CONFIGFS_MASS_STORAGE=y
+"""
+
+# Сохраняем конфиг
+config_path = output_dir / "sweet_defconfig.txt"
+config_path.write_text(sweet_defconfig)
+
+# Обновлённый workflow с шагом патча и сборки модуля
+workflow_content = """name: build AOSP
 on:
   workflow_dispatch:
 
@@ -15,7 +51,7 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Prepare timezone 
+    - name: Prepare timezone
       run: |
             sudo rm /etc/localtime
             sudo ln -s /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
@@ -34,7 +70,7 @@ jobs:
 
     - name: Setup Environment
       run: |
-            echo "BUILD_TIME=$(TZ=Asia/Jakarta date "+%d%m%Y-%H%M")" >> $GITHUB_ENV
+            echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> $GITHUB_ENV
             echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> $GITHUB_ENV
             echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> $GITHUB_ENV
             echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> $GITHUB_ENV
@@ -43,18 +79,20 @@ jobs:
       run: |
             curl -LSs "https://raw.githubusercontent.com/Mr-Morat/KernelSU-Next/susfs/kernel/setup.sh" | bash -s susfs
 
-    - name: Build Kernel
+    - name: Build Kernel with ath9k_htc
       run: |
             export ARCH=arm64
             export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
             export KBUILD_BUILD_USER=user-tobrut
             export KBUILD_BUILD_HOST=exotic-host
-            export KBUILD_COMPILER_STRING="$$CLANG_PATH/clang"
-            make O=out ARCH=arm64 sweet_defconfig 
+            export KBUILD_COMPILER_STRING="$CLANG_PATH/clang"
+            # Загружаем модифицированный конфиг
+            cp sweet_defconfig.txt arch/arm64/configs/sweet_defconfig
+            make O=out ARCH=arm64 sweet_defconfig
             make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
               CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
               CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
-              CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi-         
+              CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi-
             mv out/.config out/sweet_defconfig.txt
 
     - name: Upload configs
@@ -63,9 +101,17 @@ jobs:
         name: configs-${{ env.BUILD_TIME }}
         path: out/sweet_defconfig.txt
 
+    - name: Upload ath9k_htc modules
+      uses: actions/upload-artifact@v4
+      with:
+        name: ath9k_htc-modules-${{ env.BUILD_TIME }}
+        path: |
+          out/drivers/net/wireless/ath/ath9k/*.ko
+          out/drivers/net/wireless/ath/ath9k/htc/*.ko
+
     - name: Clone Anykernel3
       run: |
-            git clone --depth=1 https://github.com/Mr-Morat/anykernel3 -b main AnyKernel3 
+            git clone --depth=1 https://github.com/Mr-Morat/anykernel3 -b main AnyKernel3
             cp out/arch/arm64/boot/Image.gz AnyKernel3/Image.gz
             cp out/arch/arm64/boot/dtbo.img AnyKernel3/dtbo.img
             cp out/arch/arm64/boot/dtb.img AnyKernel3/dtb.img
@@ -85,3 +131,15 @@ jobs:
           -F message_thread_id=120979 \
           -F document=@"TobrutExotic-AOSP-${{ env.BUILD_TIME }}.zip" \
           -F caption=" Last Version is Cumming "
+"""
+
+workflow_path = output_dir / "AOSP_Builder.yml"
+workflow_path.write_text(workflow_content)
+
+# Создаём архив
+zip_path = Path("/mnt/data/aosp_ath9k_patch.zip")
+with zipfile.ZipFile(zip_path, "w") as zipf:
+    zipf.write(config_path, config_path.name)
+    zipf.write(workflow_path, workflow_path.name)
+
+zip_path
