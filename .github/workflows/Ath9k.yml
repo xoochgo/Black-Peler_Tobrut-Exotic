@@ -1,0 +1,115 @@
+name: сборка ядра [ATH9K] # build kernel [AOSP]
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Извлечение кода # Checkout Code
+      uses: actions/checkout@v4
+      # Этот шаг уже клонирует ваш репозиторий (который является исходным кодом ядра)
+      # в корневую директорию рабочей области.
+
+    - name: Подготовка часового пояса # Prepare timezone
+      run: |
+        echo "BUILD_TIME=$(TZ=Asia/Jakarta date "+%d%m%Y-%H%M")" >> $GITHUB_ENV
+        sudo rm /etc/localtime
+        sudo ln -s /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
+
+    - name: Установка зависимостей # Install Dependencies
+      run: |
+        sudo apt update -y
+        sudo apt install bc cpio flex bison aptitude git python-is-python3 tar perl wget curl lz4 -y
+        sudo aptitude install libssl-dev -y
+
+    - name: Загрузка наборов инструментов # Fetch Toolchains
+      run: |
+        mkdir clang && curl https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz -RLO && tar -C clang/ -xf clang-*.tar.gz
+        git clone https://github.com/greenforce-project/gcc-arm64 -b main --depth=1 gcc64
+        git clone https://github.com/greenforce-project/gcc-arm -b main --depth=1 gcc32
+
+    - name: Загрузка KernelSU-SuSFS # Fetch KernelSU-SuSFS
+      run: |
+        # Этот скрипт клонирует KernelSU-Next в подкаталог 'KernelSU-Next'
+        # и создает симлинк 'drivers/kernelsu', указывающий на 'KernelSU-Next/kernel'.
+        # Он не влияет на расположение вашего основного исходного кода ядра.
+        curl -LSs "https://raw.githubusercontent.com/buildkernel1/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
+
+    - name: AOSP Размеры # AOSP Dimensi
+      run: |
+        # Пути теперь относительны к корню вашего репозитория (который является ядром).
+        sed -i 's/qcom,mdss-pan-physical-width-dimension = <695>;$/qcom,mdss-pan-physical-width-dimension = <69>;/' arch/arm64/boot/dts/qcom/dsi-panel-k6-38-0c-0a-fhd-dsc-video.dtsi
+        sed -i 's/qcom,mdss-pan-physical-height-dimension = <1546>;$/qcom,mdss-pan-physical-height-dimension = <154>;/' arch/arm64/boot/dts/qcom/dsi-panel-k6-38-0c-0a-fhd-dsc-video.dtsi
+
+    - name: Исправление синтаксической ошибки в msm_vidc_debug.c # Fix syntax error in msm_vidc_debug.c
+      run: |
+        # Добавляем точку с запятой в конце строки 609
+        sed -i '609s/int msm_vidc_debug = 0/int msm_vidc_debug = 0;/' drivers/media/platform/msm/vidc/msm_vidc_debug.c
+
+    - name: Сборка ядра и модулей # Build Kernel and Modules
+      run: |
+        export ARCH=arm64
+        export PATH="${PWD}/clang/bin:${PWD}/gcc64/bin:${PWD}/gcc32/bin:${PATH}"
+        export KBUILD_BUILD_USER=buildkernel1
+        export KBUILD_BUILD_HOST=mhddonip
+        export KBUILD_COMPILER_STRING="${PWD}/clang"
+        export LLVM=1
+        export LLVM_IAS=1
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+        export CROSS_COMPILE=aarch64-linux-android-
+        export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+        # Команды make выполняются прямо в корневом каталоге репозитория.
+        # Выходные файлы будут в каталоге 'out' в корне.
+        make O=out vendor/sweet_defconfig
+        make -j$(nproc --all) O=out CC=clang
+        make -j$(nproc --all) O=out CC=clang modules
+        mv out/.config out/sweet_defconfig.txt
+
+    - name: Загрузка defconfig # Upload defconfig
+      uses: actions/upload-artifact@v4
+      with:
+        # Путь к defconfig теперь в out/
+        name: defconfig-${{ env.BUILD_TIME }}
+        path: out/sweet_defconfig.txt
+
+    - name: Загрузка AnyKernel3 и копирование артефактов # Fetch AnyKernel3 and Copy Artifacts
+      run: |
+        git clone --depth=1 https://github.com/buildkernel1/Anykernel3.git -b main AnyKernel3
+        # Копирование ядра и dtb/dtbo из out/ в AnyKernel3
+        if [ -f out/arch/arm64/boot/Image.gz ]; then
+          cp out/arch/arm64/boot/Image.gz AnyKernel3/Image.gz
+        fi
+        if [ -f out/arch/arm64/boot/dtbo.img ]; then
+          cp out/arch/arm64/boot/dtbo.img AnyKernel3/dtbo.img
+        fi
+        if [ -f out/arch/arm64/boot/dtb.img ]; then
+          cp out/arch/arm64/boot/dtb.img AnyKernel3/dtb.img
+        fi
+        # Копирование всех собранных модулей (.ko) из out/ в AnyKernel3/modules
+        mkdir -p AnyKernel3/modules
+        find out/ -name "*.ko" -exec cp {} AnyKernel3/modules/ \;
+
+    - name: Загрузка ядра и модулей (AnyKernel3) # Upload Kernel & Modules (AnyKernel3)
+      uses: actions/upload-artifact@v4
+      with:
+        name: STRIX-Interstellar-AOSP-${{ env.BUILD_TIME }}
+        path: AnyKernel3/*
+
+    - name: Сбор и загрузка модулей ath9k (отдельно) # Collect and Upload ath9k modules (separately)
+      run: |
+        mkdir -p out/modules
+        # Поиск модулей ath9k теперь в out/
+        find out -name "ath.ko" -exec cp {} out/modules/ \;
+        find out -name "ath9k.ko" -exec cp {} out/modules/ \;
+        find out -name "ath9k_common.ko" -exec cp {} out/modules/ \;
+        find out -name "ath9k_htc.ko" -exec cp {} out/modules/ \;
+        find out -name "ath9k_hw.ko" -exec cp {} out/modules/ \;
+        find out -name "mac80211.ko" -exec cp {} out/modules/ \;
+        find out -name "cfg80211.ko" -exec cp {} out/modules/ \;
+
+    - name: Загрузка модулей ath9k (артефакт) # Upload ath9k modules (artifact)
+      uses: actions/upload-artifact@v4
+      with:
+        name: ath9k-modules
+        path: out/modules/
